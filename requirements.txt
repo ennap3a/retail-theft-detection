@@ -1,0 +1,10 @@
+# CPU-only PyTorch keeps installs small (Streamlit Community Cloud, laptops).
+# Remove this line to let pip pick a CUDA build on a GPU machine.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+numpy>=1.26
+opencv-python>=4.9
+ultralytics>=8.3
+imageio-ffmpeg>=0.5
+streamlit>=1.50
+streamlit-image-coordinates>=0.4

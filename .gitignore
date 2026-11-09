@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Uploaded videos and generated results (never commit customer footage)
+data/*
+!data/.gitkeep
+datasets/*
+!datasets/.gitkeep
+reports/*
+!reports/.gitkeep
+local_review_workspace/evaluation_log.csv
+local_review_workspace/normal_videos/*
+!local_review_workspace/normal_videos/.gitkeep
+local_review_workspace/suspicious_videos/*
+!local_review_workspace/suspicious_videos/.gitkeep
+external_models/
+
+# Model weights and training runs (Ultralytics downloads yolo11n*.pt on first use)
+runs/
+*.pt
+*.h5
+*.onnx
+*.engine
+
+# Videos
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Streamlit secrets
+.streamlit/secrets.toml
