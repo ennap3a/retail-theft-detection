@@ -24,6 +24,7 @@ external_models/
 # Model weights and training runs (Ultralytics downloads yolo11n*.pt on first use)
 runs/
 *.pt
+!models/*.pt
 *.h5
 *.onnx
 *.engine

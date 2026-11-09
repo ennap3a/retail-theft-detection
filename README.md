@@ -6,10 +6,17 @@
 ![Streamlit](https://img.shields.io/badge/app-Streamlit-FF4B4B)
 
 A computer-vision system that reviews retail CCTV footage for **suspected concealment** of
-products. It goes beyond object detection: it follows the *sequence* of behaviour —
-a customer reaches a product zone, an item leaves the shelf, the item stops being visible
-in the hand after moving toward clothing or a bag, and the person then leaves the
-browsing area — and only then raises an alert **for a human to review**.
+products and raises alerts **for a human to review**. Two independent signals run side by side:
+
+- **Behaviour model.** Trained on 365 labelled clips, it scores each tracked person's body
+  movement — a hand going to a pocket, waistband or bag — from their pose keypoints alone, so it
+  ignores the store background, camera and lighting. It averages a spatial-temporal graph network
+  (ST-GCN) with a gradient-boosting model on hand-crafted movement features.
+- **Zone rules.** An explainable event chain: a customer reaches a product zone, an item leaves
+  the shelf and then stops being visible after the hand moves toward clothing or a bag.
+
+Optional checkout and exit zones set the priority: hiding an item and then reaching an exit
+without passing a checkout is flagged **HIGH**.
 
 <p align="center">
   <img src="assets/demo.gif" alt="Four-camera alert screen flagging a suspected concealment event for human review" width="820">
@@ -27,9 +34,29 @@ browsing area — and only then raises an alert **for a human to review**.
 | Person detection & tracking | YOLO11n + ByteTrack (unique ID per person) |
 | Hand / body keypoints | YOLO11n-pose (wrists, shoulders, hips → torso box) |
 | Shelf change detection | OpenCV frame differencing inside user-drawn product zones |
-| Behaviour logic | Rule-based state machine per track (see below) |
+| Behaviour model | ST-GCN on 4-second skeleton windows + gradient boosting on movement features, averaged per person |
+| Behaviour rules | Rule-based state machine per track (see below) |
 | Evidence | Annotated video, item crop, person crop, 4-second clip, JSON/CSV report |
 | Review | Local web app: side-by-side video, alert list, TP/FP/FN/TN evaluation log, ZIP export |
+
+### Behaviour model
+
+Each tracked person is cut into 4-second windows (one every second). A window holds 17 COCO
+keypoints per frame at 8 fps, normalised to the person's hips and height, plus joint velocity,
+body velocity and distance from the hands to any bag. A small ST-GCN (4 graph-convolution
+blocks) scores every window; a person's score is their most suspicious window.
+
+The training clips are only labelled at clip level ("theft happens somewhere in this clip"), so
+the network is trained with **multiple-instance learning**: a clip's score is the maximum over all
+its people and windows, and only that maximum is compared with the label. The shipped model is an
+ensemble of the five cross-validation fold models.
+
+The second half summarises each person over 10-second windows with interpretable signals (wrist
+distance to the hips, hand inside the torso box, wrist hidden while the body is visible, reaching
+above the shoulders, crouching, hand near a bag, head turning) and scores them with gradient
+boosting. The two probabilities are averaged; cross-validation showed the average beats either
+model alone. See [Evaluation](#evaluation) and the model card
+[`models/behaviour_model.json`](models/behaviour_model.json).
 
 ### Behaviour rules
 
@@ -41,8 +68,10 @@ browsing area — and only then raises an alert **for a human to review**.
 - If the person **blocks** the product zone, the detector waits instead of treating the
   shelf as empty.
 - An item that disappears after moving near the torso or a bag becomes *possible
-  concealment*. An alert is raised **only** after possible concealment **and** leaving the
-  customer zone.
+  concealment*. A confirmed hidden item raises a **MEDIUM** review alert straight away; the person
+  does not have to leave an area first.
+- Checkout and exit zones are optional. Reaching an exit afterwards without passing a checkout
+  raises the alert to **HIGH**; going to a checkout lowers it to **LOW** (check the payment).
 
 All thresholds live in [`DetectorSettings`](retail_theft_detector/detector.py).
 
@@ -52,20 +81,21 @@ All thresholds live in [`DetectorSettings`](retail_theft_detector/detector.py).
   <img src="assets/streamlit_home.jpg" alt="Streamlit app home page with video upload" width="820">
 </p>
 
-| 1. Click to outline product and customer zones | 2. Review the original and annotated video |
+| 1. Click to outline product, checkout and exit zones | 2. Review each alert with its evidence |
 |---|---|
-| ![Zone drawing](assets/streamlit_zones.jpg) | ![Results](assets/streamlit_results.jpg) |
+| ![Zone drawing](assets/streamlit_zones.jpg) | ![Alert card](assets/streamlit_alert.jpg) |
 
 A four-step guided workflow:
 
 1. **Upload** one CCTV clip (MP4, MOV, AVI, MKV or WEBM, up to 500 MB).
 2. **Draw zones** — pick a clear setup frame, then click on the image to outline one or more
-   product zones and one customer zone. Zones are validated before you can continue.
-3. **Run analysis** — live progress while the detector tracks people, reads pose and applies
-   the behaviour rules. Confidence, analysis frame rate and evidence clip length are adjustable
-   in the sidebar.
-4. **Review** — side-by-side original and annotated video, one card per alert with the frame,
-   shelf crop, person crop and evidence clip, a reviewer feedback form (logged as TP / FP / FN /
+   **product** zones. Everything else is the shop floor. **Checkout** and **exit** zones are
+   optional and only change alert priority.
+3. **Run analysis** — live progress while the detector tracks people, reads pose, applies the
+   zone rules and scores body movement with the behaviour model. Confidence, analysis frame rate,
+   evidence clip length and the skeleton alert threshold are adjustable in the sidebar.
+4. **Review** — side-by-side original and annotated video, one card per alert (priority, which
+   signal raised it, skeleton score) with the frame, shelf crop, person crop and evidence clip, a reviewer feedback form (logged as TP / FP / FN /
    TN) and downloads: alerts CSV, summary JSON, annotated video and a full review-package ZIP.
 
 **Start over and delete my data** removes the uploaded video and every generated file.
@@ -84,9 +114,6 @@ streamlit run streamlit_app.py
 Open <http://localhost:8501>. Ultralytics downloads `yolo11n.pt` and `yolo11n-pose.pt`
 automatically on the first analysis. On a laptop CPU a 10-second 544×544 clip takes about
 10 seconds at the default 8 analysed frames per second; a GPU is much faster.
-
-A lightweight alternative UI with no Streamlit dependency is also included:
-`python run_local_app.py` → <http://127.0.0.1:7860>.
 
 ## Deploy on Streamlit Community Cloud
 
@@ -112,22 +139,39 @@ clips short.
 
 ## Evaluation
 
-Honest numbers so far; the project is still at the prototype stage.
+All numbers are from **5-fold stratified cross-validation on 365 clips** (134 suspicious,
+231 normal): every clip is scored only by models that never saw it during training. A clip counts
+as flagged when its most suspicious person-window passes the threshold.
 
-| Test | Result |
-|---|---|
-| Rule-based detector on 5 normal store clips | 5/5 correct (no false alerts) |
-| Rule-based detector on suspicious clips | Not yet measured at scale — next milestone |
-| External action-recognition baseline ([SilentVision](docs/silentvision_model_evaluation.md)) on 365 clips (134 suspicious / 231 normal) | Precision 0.28 · Recall 0.48 · F1 0.35 · **73% false-alarm rate** |
+| Model | ROC-AUC | Recall | Precision | False alarms on normal clips |
+|---|---|---|---|---|
+| **Behaviour model (shipped)** — at default threshold 0.38 | **0.835** | **81%** | **57%** | **35%** |
+| Skeleton network only | 0.792 | 81% | 50% | 48% |
+| Movement features only | 0.815 | 81% | 59% | 32% |
+| External action model ([SilentVision](docs/silentvision_model_evaluation.md)) | — | 48% | 28% | 73% |
 
-The external clip classifier raised false alarms on almost three out of four normal videos,
-which is why this project uses an explainable zone + pose + tracking pipeline as the primary
-signal and treats action models only as a possible second opinion
-([details](docs/silentvision_model_evaluation.md), [raw metrics](docs/benchmarks/silentvision_365_clips.json)).
+The default threshold is the highest one that still catches 80% of suspicious clips, because
+missed theft is the costlier error for a review tool. Lowering it in the sidebar catches more:
+at 0.24 the behaviour model reaches 90% recall at a 50% false-alarm rate.
 
-Planned metrics: event precision/recall, false alerts per camera-hour, alert timestamp error,
-and detection mAP for `person`, `held_product`, `bag`, `basket_cart`
-([plan](docs/training_and_evaluation.md)).
+**Is it learning behaviour or the dataset?** The suspicious and normal clips partly come from
+different sources, and camera metadata alone (clip length, resolution, frame rate, number of
+people) predicts the label with ROC-AUC 0.75. Two checks show the model learns more than that:
+
+- Within a single camera format, where the source cannot help, it still separates the classes:
+  ROC-AUC 0.78 on 640×480 clips and 0.87 on 704×576 clips.
+- Its scores are almost uncorrelated with clip length (r = 0.06), and adding the model to the
+  metadata raises ROC-AUC from 0.75 to 0.82.
+
+Track length and people count were removed from the features for the same reason.
+
+On three store clips from a separate theft folder that are not in the training set, the behaviour
+model flagged two that the zone rules missed and scored the third below the threshold. The zone
+rules have not yet been measured at scale.
+
+Full results: [`models/behaviour_model.json`](models/behaviour_model.json) ·
+[SilentVision raw metrics](docs/benchmarks/silentvision_365_clips.json) ·
+[evaluation plan](docs/training_and_evaluation.md).
 
 ## Project structure
 
@@ -146,10 +190,14 @@ retail_theft_detector/
   zones.py                    Zone validation and storage
   video.py                    Video probing, frame extraction, safe filenames
   project.py                  Per-upload project folders and metadata
+  pose_tracks.py              Per-person keypoint recorder shared by the app and training
+  skeleton_model.py           ST-GCN network, windowing and the combined behaviour scorer
+  behaviour.py                Hand-crafted movement features (second half of the behaviour model)
   config.py                   Paths and environment settings
-  web_app.py, multipart.py    Lightweight standard-library web UI
   training.py                 CLI: build YOLO datasets, train, evaluate mAP
   silentvision_action_model.py  Optional wrapper for the external action classifier
+models/                                Trained behaviour model and its model card (behaviour_model.json)
+tools/train_behaviour_model.py         Pose extraction, cross-validation and training
 tools/evaluate_silentvision_model.py   Batch evaluation of the external baseline
 notebooks/train_yolo_colab.ipynb       GPU training in Google Colab
 docs/                                  Product plan, training, testing and evaluation notes
@@ -157,7 +205,23 @@ tests/                                 pytest suite
 .streamlit/config.toml, packages.txt   Streamlit theme, upload limit and cloud system packages
 ```
 
-## Custom training
+## Training the behaviour model
+
+Put labelled clips in two folders, `suspicious_videos/` and `normal_videos/`, then:
+
+```bash
+pip install -r requirements-dev.txt
+# 1. run tracking + pose once per clip (cached under data/behaviour_cache/)
+python tools/train_behaviour_model.py extract --clips /path/to/clips --workers 4
+# 2. cross-validate both halves and their combination, then save the models + model card
+python tools/train_behaviour_model.py train
+```
+
+Extraction uses exactly the same detector, tracker and pose settings as the app, so the model is
+trained on the same input it sees in production. `--target-recall` (default 0.8) sets how many
+suspicious clips the default threshold should catch.
+
+## Custom object detector
 
 ```bash
 python -m retail_theft_detector.training init-dataset --name retail_theft_v1 \
@@ -183,7 +247,11 @@ CI runs lint and tests on Python 3.11, 3.12 and 3.13.
 ## Limitations
 
 - Uses COCO-pretrained YOLO weights; small items (cosmetics, phones) are often missed
-  without custom training.
+  without custom training, which weakens the zone rules (the behaviour model does not need them).
+- The behaviour model only knows the 365 training clips (mostly fixed indoor cameras). Different
+  camera heights and angles can change its scores; retrain with your own footage.
+- Clip-level labels mean the model learns *that* a clip contains theft, not exactly *when*;
+  alert timestamps are the most suspicious 4-second window, not a precise moment.
 - One camera per run, offline video only — no live RTSP stream yet.
 - Rules are tuned on a small number of clips and need per-store zone setup.
 - Occlusion by other shoppers, unusual camera angles and low light reduce reliability.
@@ -193,9 +261,10 @@ CI runs lint and tests on Python 3.11, 3.12 and 3.13.
 
 - [x] Streamlit app with click-to-draw zones and reviewer feedback
 - [ ] Public hosted demo
-- [ ] Event-level precision/recall on a labelled suspicious set
-- [ ] Custom `held_product` / `bag` detector trained on store footage
-- [ ] Action-recognition model as a second-stage check
+- [x] Behaviour model (ST-GCN + movement features) trained on 365 labelled clips
+- [x] Product-only zones with optional checkout / exit priority
+- [ ] Mark the theft moment in each suspicious clip and retrain with time-level labels
+- [ ] Custom `hand` / `held_product` / `bag` detector trained on store footage
 - [ ] Live RTSP/CCTV input and multi-camera view
 - [ ] Face blurring in exported evidence for privacy
 

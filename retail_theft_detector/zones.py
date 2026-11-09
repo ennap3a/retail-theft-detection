@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-REQUIRED_ZONE_TYPES = {"product", "customer"}
+# Only product zones are required: everything outside them is the shop floor.
+# Checkout and exit zones are optional and only change how urgent an alert is.
+# "customer" is accepted so zone files saved by older versions still load (it is ignored).
+ZONE_TYPES = ("product", "checkout", "exit")
+LEGACY_ZONE_TYPES = ("customer",)
 
 
 def polygon_area(points: list[dict[str, float]]) -> float:
@@ -30,7 +34,6 @@ def validate_zone_document(doc: dict[str, Any]) -> list[str]:
         return errors + ["Zones must be a list."]
 
     product_count = 0
-    customer_count = 0
     seen_ids = set()
 
     for index, zone in enumerate(zones, start=1):
@@ -45,12 +48,10 @@ def validate_zone_document(doc: dict[str, Any]) -> list[str]:
             errors.append(f"{label}: duplicate id.")
         seen_ids.add(zone_id)
 
-        if zone_type not in REQUIRED_ZONE_TYPES:
-            errors.append(f"{label}: type must be product or customer.")
+        if zone_type not in ZONE_TYPES + LEGACY_ZONE_TYPES:
+            errors.append(f"{label}: type must be one of {', '.join(ZONE_TYPES)}.")
         if zone_type == "product":
             product_count += 1
-        if zone_type == "customer":
-            customer_count += 1
 
         if not isinstance(points, list) or len(points) < 3:
             errors.append(f"{label}: draw at least 3 points.")
@@ -73,8 +74,6 @@ def validate_zone_document(doc: dict[str, Any]) -> list[str]:
 
     if product_count < 1:
         errors.append("Draw at least one product zone.")
-    if customer_count != 1:
-        errors.append("Draw exactly one customer zone.")
 
     return errors
 
@@ -94,7 +93,7 @@ def save_zones(path: Path, doc: dict[str, Any]) -> None:
 
 
 def zone_counts(doc: dict[str, Any] | None) -> dict[str, int]:
-    counts = {"product": 0, "customer": 0}
+    counts = dict.fromkeys(ZONE_TYPES, 0)
     if not doc:
         return counts
     for zone in doc.get("zones", []):
@@ -102,3 +101,15 @@ def zone_counts(doc: dict[str, Any] | None) -> dict[str, int]:
         if zone_type in counts:
             counts[zone_type] += 1
     return counts
+
+
+def alert_priority(visits: dict[str, list[float]] | None, after: float) -> tuple[str, str]:
+    """Alert priority from what the person did after ``after`` seconds: exit without paying → HIGH."""
+    visits = visits or {"checkout": [], "exit": []}
+    checkout = [t for t in visits["checkout"] if t >= after]
+    exits = [t for t in visits["exit"] if t >= after]
+    if exits and (not checkout or min(exits) < min(checkout)):
+        return "HIGH", f" Reached an exit at {min(exits):.1f}s without passing a checkout."
+    if checkout:
+        return "LOW", f" Went to a checkout at {min(checkout):.1f}s: check whether the item was paid for."
+    return "MEDIUM", ""

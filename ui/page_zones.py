@@ -1,4 +1,4 @@
-"""Step 2: choose a setup frame and draw product / customer zones."""
+"""Step 2: choose a setup frame and draw product zones (plus optional checkout / exit zones)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from retail_theft_detector.zones import load_zones, save_zones, validate_zone_do
 from . import state
 from .drawing import finish_zone, render_zones, zone_document
 
-MODES = {"Product zone": "product", "Customer zone": "customer"}
+MODES = {"Product": "product", "Checkout": "checkout", "Exit": "exit"}
+ICONS = {"product": "🟩", "checkout": "🟦", "exit": "🟥", "customer": "⬜"}
 
 
 def _load_saved_zones(project_id: str) -> None:
@@ -52,7 +53,15 @@ def render() -> None:
     with right:
         _setup_frame_controls(project, paths)
         st.divider()
-        mode_label = st.radio("Drawing", list(MODES), horizontal=True, key="zone_mode")
+        mode_label = st.radio(
+            "Drawing",
+            list(MODES),
+            horizontal=True,
+            key="zone_mode",
+            help="Product zones are required. Checkout and exit zones are optional: "
+            "they raise an alert's priority when someone hides an item and then heads for the exit "
+            "without passing a checkout.",
+        )
         zone_type = MODES[mode_label]
         draft = st.session_state.draft_points
         st.caption(f"{len(draft)} point(s) in the current outline. Click the image to add points.")
@@ -88,10 +97,11 @@ def render() -> None:
 
         with st.expander("How to draw good zones", expanded=not st.session_state.zones):
             st.markdown(
-                "- **Product zone** — trace tightly around shelves, racks or tables where items are taken from. "
-                "You can add several.\n"
-                "- **Customer zone** — the browsing area where a shopper normally stands. "
-                "Leave exits, tills and walkways *outside* it: leaving this zone is part of the alert rule.\n"
+                "- **Product** (required) — trace tightly around shelves, racks or tables where items are "
+                "taken from. You can add several. Everything outside them counts as the shop floor.\n"
+                "- **Checkout** (optional) — tills or self-checkout. Paying there lowers the alert priority.\n"
+                "- **Exit** (optional) — doors or the edge of the frame people leave through. Hiding an item "
+                "and then reaching an exit without a checkout makes the alert high priority.\n"
                 "- Pick a setup frame where the shelves are fully visible and nobody blocks them."
             )
 
@@ -139,11 +149,11 @@ def _zone_list() -> None:
     zones = st.session_state.zones
     st.markdown("**Zones**")
     if not zones:
-        st.caption("No zones yet. You need at least one product zone and one customer zone.")
+        st.caption("No zones yet. Draw at least one product zone.")
         return
     for index, zone in enumerate(zones):
         name, delete = st.columns([3, 1])
-        icon = "🟩" if zone["type"] == "product" else "🟦"
+        icon = ICONS.get(zone["type"], "⬜")
         name.write(f"{icon} {zone['label']} · {len(zone['points'])} pts")
         if delete.button("✕", key=f"delete_zone_{zone['id']}", help=f"Delete {zone['label']}"):
             st.session_state.zones = zones[:index] + zones[index + 1 :]

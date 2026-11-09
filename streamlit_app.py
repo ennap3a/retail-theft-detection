@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import streamlit as st
 
+from retail_theft_detector.config import BEHAVIOUR_CARD_PATH as CARD_PATH
+from retail_theft_detector.config import SKELETON_WEIGHTS_PATH as WEIGHTS_PATH
 from retail_theft_detector.config import retention_hours
 from retail_theft_detector.project import paths_for_project
 from retail_theft_detector.review import cleanup_old_projects
@@ -43,7 +46,7 @@ def _housekeeping() -> int:
 def _sidebar() -> None:
     with st.sidebar:
         st.markdown("## 🛡️ Theft Review")
-        st.caption("YOLO11 · pose estimation · zone logic")
+        st.caption("YOLO11 · pose · behaviour model · zone logic")
 
         st.markdown("#### Detector settings")
         locked = st.session_state.step == 3
@@ -76,6 +79,7 @@ def _sidebar() -> None:
             disabled=locked,
             help="Seconds of footage kept before and after each alert.",
         )
+        _behaviour_settings(locked)
 
         st.divider()
         if st.session_state.project_id and st.button("Start over and delete my data"):
@@ -88,6 +92,41 @@ def _sidebar() -> None:
             "and must not be used for automated decisions about people."
         )
         st.markdown(f"[Source code on GitHub]({REPO_URL})")
+
+
+@st.cache_data(show_spinner=False)
+def _behaviour_card() -> dict | None:
+    if not CARD_PATH.exists() or not WEIGHTS_PATH.exists():
+        return None
+    return json.loads(CARD_PATH.read_text(encoding="utf-8"))
+
+
+def _behaviour_settings(locked: bool) -> None:
+    card = _behaviour_card()
+    if card is None:
+        return
+    st.markdown("#### Behaviour model")
+    enabled = st.toggle(
+        "Score body movement",
+        value=True,
+        key="cfg_behaviour",
+        disabled=locked,
+        help="A second detector that learned what concealment movements look like from 365 labelled clips "
+        "(skeleton network + movement features). "
+        "It does not need a shelf change or a visible item, so it catches theft the zone rules miss.",
+    )
+    default = float(card.get("threshold", 0.5))
+    st.slider(
+        "Alert threshold",
+        0.05,
+        0.95,
+        round(default, 2),
+        0.01,
+        key="cfg_behaviour_threshold",
+        disabled=locked or not enabled,
+        help=f"Lower catches more theft but raises more false alarms. The default ({default:.2f}) was chosen "
+        "during training to catch most suspicious clips.",
+    )
 
 
 def main() -> None:

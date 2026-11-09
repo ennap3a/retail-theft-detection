@@ -14,7 +14,9 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
+from .pose_tracks import ObservationRecorder
 from .project import load_project, paths_for_project, read_json, update_project, utc_now_iso, write_json
+from .zones import alert_priority
 
 PERSON_CLASS = 0
 BAG_CLASSES = {24, 26, 28}  # backpack, handbag, suitcase
@@ -105,7 +107,7 @@ class DetectorSettings:
     object_to_hand_distance_px: float = 85.0
     missing_confirm_seconds: float = 0.55
     concealment_confirm_seconds: float = 0.35
-    leave_confirm_seconds: float = 0.55
+    zone_confirm_seconds: float = 0.55  # time inside a checkout / exit zone before it counts
     return_confirm_seconds: float = 0.60
     return_zone_distance_px: float = 75.0
     visible_item_grace_seconds: float = 1.25
@@ -116,6 +118,8 @@ class DetectorSettings:
     origin_box_margin_px: int = 18
     evidence_seconds_before: float = 2.0
     evidence_seconds_after: float = 2.0
+    use_behaviour_model: bool = True  # second, zone-independent signal from body movement
+    behaviour_threshold: float | None = None  # None = threshold chosen at training time
 
 
 @dataclass
@@ -182,7 +186,6 @@ def reset_behavior_state(state: dict[str, Any], status: str) -> None:
             "interaction_frames": 0,
             "missing_frames": 0,
             "concealment_frames": 0,
-            "outside_frames": 0,
             "returned_frames": 0,
             "return_candidate_frames": 0,
             "visible_item_frames": 0,
@@ -602,7 +605,8 @@ def analyze_project(
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     product_zones: list[dict[str, Any]] = []
-    customer_zone: dict[str, Any] | None = None
+    checkout_zones: list[dict[str, Any]] = []
+    exit_zones: list[dict[str, Any]] = []
     for zone in zones_doc.get("zones", []):
         polygon = points_to_np(zone["points"])
         prepared = {
@@ -614,10 +618,13 @@ def analyze_project(
         }
         if zone["type"] == "product":
             product_zones.append(prepared)
-        elif zone["type"] == "customer":
-            customer_zone = prepared
-    if not product_zones or customer_zone is None:
-        raise RuntimeError("Detector requires at least one product zone and exactly one customer zone.")
+        elif zone["type"] == "checkout":
+            checkout_zones.append(prepared)
+        elif zone["type"] == "exit":
+            exit_zones.append(prepared)
+        # "customer" zones from older zone files are ignored: everything outside the product zones is shop floor.
+    if not product_zones:
+        raise RuntimeError("Detector requires at least one product zone.")
 
     if progress:
         progress(0.0, "Loading detection and pose models")
@@ -637,6 +644,8 @@ def analyze_project(
 
     states: dict[str, dict[str, Any]] = {}
     alerts: list[dict[str, Any]] = []
+    recorder = ObservationRecorder()
+    zone_visits: dict[str, dict[str, list[float]]] = {}
     processed_frames = 0
     status_colors = {
         "NORMAL": (220, 220, 220),
@@ -651,7 +660,7 @@ def analyze_project(
 
     confirm_missing_frames = max(1, int(settings.missing_confirm_seconds * analysis_fps))
     confirm_concealment_frames = max(1, int(settings.concealment_confirm_seconds * analysis_fps))
-    confirm_leave_frames = max(1, int(settings.leave_confirm_seconds * analysis_fps))
+    confirm_zone_frames = max(1, int(settings.zone_confirm_seconds * analysis_fps))
     confirm_return_frames = max(1, int(settings.return_confirm_seconds * analysis_fps))
     visible_item_grace_frames = max(1, int(settings.visible_item_grace_seconds * analysis_fps))
     confirm_hidden_frames = max(
@@ -690,7 +699,10 @@ def analyze_project(
         pose_results = pose_model.predict(source=frame, conf=settings.pose_confidence, verbose=False)
         poses = parse_poses(pose_results[0]) if pose_results else []
 
-        draw_polygon(display, customer_zone["polygon"], (255, 130, 30), str(customer_zone["label"]))
+        for zone in checkout_zones:
+            draw_polygon(display, zone["polygon"], (250, 165, 96), str(zone["label"]))
+        for zone in exit_zones:
+            draw_polygon(display, zone["polygon"], (113, 113, 248), str(zone["label"]))
         for zone in product_zones:
             draw_polygon(display, zone["polygon"], (0, 210, 180), str(zone["label"]))
             score_text = f"{zone['label']} change {zone_scores[zone['id']]:.3f}"
@@ -713,7 +725,6 @@ def analyze_project(
                     "interaction_frames": 0,
                     "missing_frames": 0,
                     "concealment_frames": 0,
-                    "outside_frames": 0,
                     "returned_frames": 0,
                     "return_candidate_frames": 0,
                     "visible_item_frames": 0,
@@ -727,6 +738,10 @@ def analyze_project(
                     "suspicion_score": 0,
                     "last_container_type": "",
                     "alerted": False,
+                    "alert_index": None,
+                    "checkout_frames": 0,
+                    "exit_frames": 0,
+                    "checkout_after_alert": False,
                 },
             )
 
@@ -735,13 +750,20 @@ def analyze_project(
             body_box = torso_box(person.box, pose.keypoints if pose else None)
             person_center = person.center
             bottom_center = (person_center[0], person.box[3])
-            in_customer_zone = point_in_polygon(bottom_center, customer_zone["polygon"]) or point_in_polygon(
-                person_center, customer_zone["polygon"]
-            )
-            if in_customer_zone:
-                state["outside_frames"] = 0
-            else:
-                state["outside_frames"] += 1
+
+            def inside(zones: list[dict[str, Any]], bottom=bottom_center, centre=person_center) -> bool:
+                return any(point_in_polygon(bottom, z["polygon"]) or point_in_polygon(centre, z["polygon"]) for z in zones)
+
+            state["checkout_frames"] = state["checkout_frames"] + 1 if inside(checkout_zones) else 0
+            state["exit_frames"] = state["exit_frames"] + 1 if inside(exit_zones) else 0
+            at_checkout = state["checkout_frames"] >= confirm_zone_frames
+            at_exit = state["exit_frames"] >= confirm_zone_frames
+            visits = zone_visits.setdefault(track_id, {"checkout": [], "exit": []})
+            if at_checkout:
+                visits["checkout"].append(current_time)
+            if at_exit:
+                visits["exit"].append(current_time)
+            recorder.add(current_time, track_id, person.box, pose.keypoints if pose else None, [b.box for b in bags])
 
             best_interaction_zone = None
             for zone in product_zones:
@@ -921,16 +943,13 @@ def analyze_project(
                 state["status"] = "HIDDEN_ITEM_SUSPECTED"
                 state["suspicion_score"] = max(int(state["suspicion_score"]), 75)
 
-            final_alert = (
-                hidden_item_suspected
-                and not in_customer_zone
-                and state["outside_frames"] >= confirm_leave_frames
-                and not state["alerted"]
-            )
+            # Hiding an item is enough for a review alert; checkout / exit zones only change its priority.
+            final_alert = hidden_item_suspected and not state["alerted"]
             if final_alert:
                 state["status"] = "HUMAN_REVIEW_REQUIRED"
                 state["suspicion_score"] = 95
                 state["alerted"] = True
+                state["alert_index"] = len(alerts)
                 alert_number = len(alerts) + 1
                 alert_id = f"ALERT_{alert_number:03d}_ID_{safe_name(track_id)}_{current_time:.2f}s"
                 full_frame_path = frames_dir / f"{alert_id}_full_frame.jpg"
@@ -961,7 +980,8 @@ def analyze_project(
                     {
                         "alert_id": alert_id,
                         "status": "HUMAN_REVIEW_REQUIRED",
-                        "review_priority": "HIGH",
+                        "review_priority": "MEDIUM",
+                        "detected_by": "rules",
                         "person_id": track_id,
                         "time_seconds": round(current_time, 2),
                         "suspicion_score": state["suspicion_score"],
@@ -979,9 +999,21 @@ def analyze_project(
                         "suspected_item_crop_image": copy_relative(item_crop_path, paths.base_dir) if item_crop_path.exists() else "",
                         "debug_image": copy_relative(debug_path, paths.base_dir) if debug_path.exists() else "",
                         "evidence_clip": copy_relative(clip_path, paths.base_dir) if clip_created else "",
-                        "notes": "Product-zone change followed by hidden item, body/bag interaction, and leaving customer zone. Human review required.",
+                        "notes": "An item left a product zone and was no longer visible after the person's hands "
+                        "moved to their body or a bag. Human review required.",
                     }
                 )
+
+            if state["alert_index"] is not None:
+                alert = alerts[state["alert_index"]]
+                if at_checkout and not state["checkout_after_alert"]:
+                    state["checkout_after_alert"] = True
+                    if alert["review_priority"] != "HIGH":
+                        alert["review_priority"] = "LOW"
+                    alert["notes"] += f" Went to a checkout at {current_time:.1f}s: check whether the item was paid for."
+                if at_exit and not state["checkout_after_alert"] and alert["review_priority"] != "HIGH":
+                    alert["review_priority"] = "HIGH"
+                    alert["notes"] += f" Reached an exit at {current_time:.1f}s without passing a checkout."
 
             x1, y1, x2, y2 = person.box
             color = status_colors.get(state["status"], (255, 255, 255))
@@ -1003,6 +1035,23 @@ def analyze_project(
     cap.release()
     writer.release()
 
+    behaviour_info: dict[str, Any] = {"used": False}
+    if settings.use_behaviour_model:
+        if progress:
+            progress(0.955, "Scoring body movement with the behaviour model")
+        behaviour_info = add_behaviour_alerts(
+            alerts,
+            recorder,
+            zone_visits,
+            settings,
+            video_path=video_path,
+            source_fps=source_fps,
+            source_duration=source_duration,
+            frame_size=(analysis_w, analysis_h),
+            dirs={"frames": frames_dir, "people": people_dir, "clips": clips_dir},
+            base_dir=paths.base_dir,
+        )
+
     if progress:
         progress(0.96, "Encoding the annotated review video")
     final_video = convert_to_browser_mp4(raw_annotated_path, annotated_video_path)
@@ -1016,6 +1065,8 @@ def analyze_project(
             "alert_id",
             "status",
             "review_priority",
+            "detected_by",
+            "behaviour_score",
             "person_id",
             "time_seconds",
             "suspicion_score",
@@ -1035,7 +1086,7 @@ def analyze_project(
             "evidence_clip",
             "notes",
         ]
-        writer_csv = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer_csv = csv.DictWriter(csv_file, fieldnames=fieldnames, extrasaction="ignore")
         writer_csv.writeheader()
         for alert in alerts:
             writer_csv.writerow(alert)
@@ -1082,6 +1133,7 @@ def analyze_project(
             "analysis_fps": round(analysis_fps, 3),
             "processed_frames": processed_frames,
         },
+        "behaviour_model": behaviour_info,
         "results": {
             "total_alerts": len(alerts),
             "annotated_video": copy_relative(final_video, paths.base_dir),
@@ -1106,3 +1158,106 @@ def analyze_project(
     if progress:
         progress(1.0, "Done")
     return summary
+
+
+def add_behaviour_alerts(
+    alerts: list[dict[str, Any]],
+    recorder: ObservationRecorder,
+    zone_visits: dict[str, dict[str, list[float]]],
+    settings: DetectorSettings,
+    *,
+    video_path: Path,
+    source_fps: float,
+    source_duration: float,
+    frame_size: tuple[int, int],
+    dirs: dict[str, Path],
+    base_dir: Path,
+) -> dict[str, Any]:
+    """Score every tracked person with the behaviour model and add an alert for suspicious ones.
+
+    People who already have a rule-based alert are not alerted twice; their rule alert gets the
+    behaviour score attached instead.
+    """
+    from .skeleton_model import BehaviourScorer
+
+    if not BehaviourScorer.available():
+        return {"used": False, "reason": "model file not found"}
+    scorer = BehaviourScorer()
+    threshold = settings.behaviour_threshold if settings.behaviour_threshold is not None else scorer.threshold
+    results = scorer.score(recorder)
+    info: dict[str, Any] = {
+        "used": True,
+        "threshold": round(threshold, 4),
+        "people_scored": len(results),
+        "top_scores": [{"person_id": r["track_id"], "score": round(r["score"], 3)} for r in results[:5]],
+    }
+
+    rule_alerts = {a["person_id"]: a for a in alerts}
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        for result in results:
+            if result["score"] < threshold:
+                break
+            track_id = result["track_id"]
+            if track_id in rule_alerts:
+                rule_alerts[track_id]["behaviour_score"] = round(result["score"], 3)
+                rule_alerts[track_id]["notes"] += f" Behaviour model agrees (score {result['score']:.2f})."
+                continue
+
+            peak = float(result["peak_time"])
+            alert_id = f"ALERT_{len(alerts) + 1:03d}_ID_{safe_name(track_id)}_{peak:.2f}s"
+            full_frame_path = dirs["frames"] / f"{alert_id}_full_frame.jpg"
+            person_crop_path = dirs["people"] / f"{alert_id}_person_crop.jpg"
+            clip_path = dirs["clips"] / f"{alert_id}_clip.mp4"
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(peak * source_fps))
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                frame = cv2.resize(frame, frame_size)
+                annotated = frame.copy()
+                x1, y1, x2, y2 = result["box"]
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (60, 60, 255), 2)
+                draw_label(annotated, f"ID {track_id} | behaviour score {result['score']:.2f}", (x1, max(22, y1 - 4)), (60, 60, 255))
+                cv2.imwrite(str(full_frame_path), annotated)
+                crop = crop_box(frame, expand_box(result["box"], frame.shape, 20))
+                if crop is not None:
+                    cv2.imwrite(str(person_crop_path), crop)
+
+            clip_start = max(0.0, result["start"] - settings.evidence_seconds_before)
+            clip_end = min(source_duration or result["end"], result["end"] + settings.evidence_seconds_after)
+            clip_created = run_ffmpeg_clip(video_path, clip_start, clip_end, clip_path)
+            priority, zone_note = alert_priority(zone_visits.get(track_id), peak)
+
+            alerts.append(
+                {
+                    "alert_id": alert_id,
+                    "status": "HUMAN_REVIEW_REQUIRED",
+                    "review_priority": priority,
+                    "detected_by": "behaviour model",
+                    "behaviour_score": round(result["score"], 3),
+                    "person_id": track_id,
+                    "time_seconds": round(peak, 2),
+                    "suspicion_score": int(round(result["score"] * 100)),
+                    "product_zone": "",
+                    "product_zone_label": "",
+                    "product_change_score": "",
+                    "changed_area_pixels": "",
+                    "container_interaction": "",
+                    "visible_item_frames": "",
+                    "item_hidden_frames": "",
+                    "origin_patch_score": "",
+                    "origin_returned_frames": "",
+                    "full_frame_image": copy_relative(full_frame_path, base_dir) if full_frame_path.exists() else "",
+                    "person_crop_image": copy_relative(person_crop_path, base_dir) if person_crop_path.exists() else "",
+                    "suspected_item_crop_image": "",
+                    "debug_image": "",
+                    "evidence_clip": copy_relative(clip_path, base_dir) if clip_created else "",
+                    "notes": f"Body movement between {result['start']:.1f}s and {result['end']:.1f}s resembles "
+                    f"concealment in the training clips (behaviour score {result['score']:.2f}, "
+                    f"threshold {threshold:.2f}). Human review required." + zone_note,
+                }
+            )
+    finally:
+        cap.release()
+    alerts.sort(key=lambda a: a["time_seconds"])
+    return info

@@ -10,8 +10,11 @@ import numpy as np
 # RGB colours
 ZONE_COLORS = {
     "product": (45, 212, 191),
-    "customer": (96, 165, 250),
+    "checkout": (96, 165, 250),
+    "exit": (248, 113, 113),
+    "customer": (148, 163, 184),
 }
+ZONE_NAMES = {"product": "Product Zone", "checkout": "Checkout", "exit": "Exit"}
 DRAFT_COLOR = (250, 204, 21)
 
 
@@ -92,21 +95,20 @@ def finish_zone(
 ) -> list[dict[str, Any]]:
     """Return a new zone list with the draft polygon added.
 
-    A new customer zone replaces the previous one; product zones are numbered.
+    Zones of each type are numbered (``product_zone_1``, ``checkout_zone_1``, ...).
     """
     if len(draft_points) < 3:
         raise ValueError("A zone needs at least 3 points.")
-    if zone_type == "customer":
-        kept = [z for z in zones if z["type"] != "customer"]
-        new = {"id": "customer_zone", "type": "customer", "label": "Customer Zone"}
-    elif zone_type == "product":
-        kept = list(zones)
-        used = {z["id"] for z in zones}
-        n = 1
-        while f"product_zone_{n}" in used:
-            n += 1
-        new = {"id": f"product_zone_{n}", "type": "product", "label": f"Product Zone {n}"}
-    else:
+    if zone_type not in ZONE_NAMES:
         raise ValueError(f"Unknown zone type: {zone_type}")
+    kept = list(zones)
+    used = {z["id"] for z in zones}
+    n = 1
+    while f"{zone_type}_zone_{n}" in used:
+        n += 1
+    label = ZONE_NAMES[zone_type] if zone_type != "product" else f"{ZONE_NAMES[zone_type]} {n}"
+    if zone_type != "product" and n > 1:
+        label = f"{label} {n}"
+    new = {"id": f"{zone_type}_zone_{n}", "type": zone_type, "label": label}
     new["points"] = [{"x": round(p["x"], 1), "y": round(p["y"], 1)} for p in draft_points]
     return [*kept, new]

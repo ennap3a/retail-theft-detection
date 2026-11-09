@@ -21,6 +21,8 @@ def detector_settings() -> DetectorSettings:
         max_analysis_fps=float(st.session_state.get("cfg_fps", defaults.max_analysis_fps)),
         evidence_seconds_before=float(st.session_state.get("cfg_evidence", defaults.evidence_seconds_before)),
         evidence_seconds_after=float(st.session_state.get("cfg_evidence", defaults.evidence_seconds_after)),
+        use_behaviour_model=bool(st.session_state.get("cfg_behaviour", defaults.use_behaviour_model)),
+        behaviour_threshold=st.session_state.get("cfg_behaviour_threshold", defaults.behaviour_threshold),
     )
 
 
@@ -36,13 +38,14 @@ def render() -> None:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Video length", format_duration(info["duration_seconds"]))
     c2.metric("Product zones", counts["product"])
-    c3.metric("Customer zone", counts["customer"])
+    c3.metric("Checkout / exit zones", f"{counts['checkout']} / {counts['exit']}")
     c4.metric("Analysis rate", f"{settings.max_analysis_fps:g} fps")
 
     st.caption(
-        "The detector tracks every person, estimates their pose, watches the product zones for "
-        "changes and applies the behaviour rules frame by frame. On a laptop CPU expect roughly "
-        "5 analysed frames per second; adjust the rate in the sidebar."
+        "The detector tracks every person and estimates their pose. Two signals run side by side: the "
+        "zone rules watch the product zones for an item leaving the shelf and disappearing, and the "
+        "behaviour model scores each person's body movement for concealment. On a laptop CPU expect "
+        "roughly 5 analysed frames per second; adjust the rate in the sidebar."
     )
 
     back, _, run = st.columns([1, 3, 1.4])

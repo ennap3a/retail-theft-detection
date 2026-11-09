@@ -128,11 +128,14 @@ def _alerts(alerts: list[dict[str, Any]], base_dir: Path) -> None:
                 f"#### {alert['alert_id']} · person {alert['person_id']} · {alert['time_seconds']:.1f} s"
             )
             details = {
-                "Suspicion score": alert.get("suspicion_score", "—"),
-                "Product zone": alert.get("product_zone_label") or "—",
-                "Container": alert.get("container_interaction") or "body / clothing",
                 "Priority": alert.get("review_priority", "—"),
+                "Detected by": alert.get("detected_by") or "rules",
             }
+            if alert.get("behaviour_score") not in (None, ""):
+                details["Behaviour score"] = alert["behaviour_score"]
+            if alert.get("product_zone_label"):
+                details["Product zone"] = alert["product_zone_label"]
+                details["Container"] = alert.get("container_interaction") or "body / clothing"
             theme.chips(details)
 
             frame_col, crops_col, clip_col = st.columns([2, 1, 2])

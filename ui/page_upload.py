@@ -26,7 +26,7 @@ def render() -> None:
     features = [
         ("Track people", "YOLO11 detection with ByteTrack keeps a stable ID for every shopper."),
         ("Read body pose", "Wrist and torso keypoints show whether an item stays in the hand."),
-        ("Follow the sequence", "Shelf change, item disappears near body or bag, person leaves the area."),
+        ("Score behaviour", "A model trained on 365 clips scores body movement; zone rules confirm a hidden item."),
         ("Collect evidence", "Annotated video, crops, clips and CSV reports for every alert."),
     ]
     for col, (title, body) in zip(cols, features, strict=True):

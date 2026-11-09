@@ -1,11 +1,14 @@
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 PROJECTS_DIR = DATA_DIR / "projects"
 TMP_DIR = DATA_DIR / "tmp"
+MODELS_DIR = ROOT_DIR / "models"
+SKELETON_WEIGHTS_PATH = MODELS_DIR / "skeleton_model.pt"
+MOVEMENT_MODEL_PATH = MODELS_DIR / "movement_features.joblib"
+BEHAVIOUR_CARD_PATH = MODELS_DIR / "behaviour_model.json"
 DATASETS_DIR = ROOT_DIR / "datasets"
 REPORTS_DIR = ROOT_DIR / "reports"
 LOCAL_REVIEW_DIR = ROOT_DIR / "local_review_workspace"
@@ -14,16 +17,6 @@ NORMAL_TEST_VIDEOS_DIR = LOCAL_REVIEW_DIR / "normal_videos"
 SUSPICIOUS_TEST_VIDEOS_DIR = LOCAL_REVIEW_DIR / "suspicious_videos"
 
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-
-
-@dataclass(frozen=True)
-class AppSettings:
-    host: str = "127.0.0.1"
-    port: int = 7860
-    max_upload_mb: int = 1500
-
-
-SETTINGS = AppSettings()
 
 
 def _env_float(name: str, default: float) -> float:

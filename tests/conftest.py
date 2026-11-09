@@ -10,22 +10,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def build_multipart(fields: dict[str, str], files: dict[str, tuple[str, bytes]], boundary: str) -> bytes:
-    """Build a multipart/form-data body the way a browser would."""
-    out = bytearray()
-    for name, value in fields.items():
-        out += f"--{boundary}\r\n".encode()
-        out += f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
-        out += value.encode() + b"\r\n"
-    for name, (filename, data) in files.items():
-        out += f"--{boundary}\r\n".encode()
-        out += f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
-        out += b"Content-Type: application/octet-stream\r\n\r\n"
-        out += data + b"\r\n"
-    out += f"--{boundary}--\r\n".encode()
-    return bytes(out)
-
-
 @pytest.fixture
 def sample_video(tmp_path: Path) -> Path:
     """A 2-second 160x120 MJPG video with a moving square."""
@@ -43,10 +27,8 @@ def sample_video(tmp_path: Path) -> Path:
 @pytest.fixture
 def isolated_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point every module that stores projects at a temporary folder."""
-    from retail_theft_detector import project, web_app
+    from retail_theft_detector import project
 
     projects_dir = tmp_path / "projects"
     monkeypatch.setattr(project, "PROJECTS_DIR", projects_dir)
-    monkeypatch.setattr(web_app, "PROJECTS_DIR", projects_dir)
-    monkeypatch.setattr(web_app, "TMP_DIR", tmp_path / "tmp")
     return projects_dir

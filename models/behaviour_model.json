@@ -1,0 +1,194 @@
+{
+  "name": "behaviour-concealment-model",
+  "created_at": "2026-11-09T18:13:12+00:00",
+  "components": {
+    "skeleton_network": {
+      "file": "skeleton_model.pt",
+      "architecture": "ST-GCN, 4 blocks, width 32, ensemble of 5 fold models",
+      "input": {
+        "fps": 8.0,
+        "window_seconds": 4.0,
+        "stride_seconds": 1.0,
+        "channels": [
+          "x",
+          "y",
+          "conf",
+          "dx",
+          "dy",
+          "body_vx",
+          "body_vy",
+          "hand_bag",
+          "bag_near"
+        ]
+      },
+      "training": {
+        "epochs": 20,
+        "loss": "multiple-instance BCE (clip = max over person-windows)"
+      }
+    },
+    "movement_features": {
+      "file": "movement_features.joblib",
+      "algorithm": "HistGradientBoostingClassifier",
+      "sklearn_version": "1.9.1",
+      "window_seconds": 10.0,
+      "features": [
+        "wrist_hip_dist_min_mean",
+        "wrist_hip_dist_min_min",
+        "wrist_hip_dist_min_max",
+        "wrist_hip_dist_min_std",
+        "wrist_hip_dist_max_mean",
+        "wrist_hip_dist_max_min",
+        "wrist_hip_dist_max_max",
+        "wrist_hip_dist_max_std",
+        "wrist_above_shoulder_mean",
+        "wrist_above_shoulder_min",
+        "wrist_above_shoulder_max",
+        "wrist_above_shoulder_std",
+        "wrist_in_torso_mean",
+        "wrist_in_torso_min",
+        "wrist_in_torso_max",
+        "wrist_in_torso_std",
+        "wrists_visible_mean",
+        "wrists_visible_min",
+        "wrists_visible_max",
+        "wrists_visible_std",
+        "wrist_hidden_body_visible_mean",
+        "wrist_hidden_body_visible_min",
+        "wrist_hidden_body_visible_max",
+        "wrist_hidden_body_visible_std",
+        "elbow_bent_mean",
+        "elbow_bent_min",
+        "elbow_bent_max",
+        "elbow_bent_std",
+        "crouch_mean",
+        "crouch_min",
+        "crouch_max",
+        "crouch_std",
+        "aspect_mean",
+        "aspect_min",
+        "aspect_max",
+        "aspect_std",
+        "shoulder_width_mean",
+        "shoulder_width_min",
+        "shoulder_width_max",
+        "shoulder_width_std",
+        "facing_mean",
+        "facing_min",
+        "facing_max",
+        "facing_std",
+        "face_visible_mean",
+        "face_visible_min",
+        "face_visible_max",
+        "face_visible_std",
+        "hand_bag_mean",
+        "hand_bag_min",
+        "hand_bag_max",
+        "hand_bag_std",
+        "bag_near_mean",
+        "bag_near_min",
+        "bag_near_max",
+        "bag_near_std",
+        "wrist_speed_mean",
+        "wrist_speed_max",
+        "body_speed_mean",
+        "body_speed_max",
+        "reach_then_hide",
+        "hide_events",
+        "torso_events",
+        "facing_changes"
+      ]
+    }
+  },
+  "combination": "mean of the two probabilities per person",
+  "threshold": 0.3783,
+  "threshold_rule": "highest threshold that still catches 80% of suspicious clips",
+  "training_data": {
+    "clips": 365,
+    "suspicious": 134,
+    "normal": 231
+  },
+  "evaluation": {
+    "method": "5-fold stratified cross-validation repeated 1x; every clip is scored only by models that never saw it during training; a clip's score is its most suspicious person-window",
+    "combined (shipped)": {
+      "roc_auc": 0.835,
+      "at_target_recall": {
+        "threshold": 0.3783,
+        "tp": 108,
+        "fp": 80,
+        "fn": 26,
+        "tn": 151,
+        "precision": 0.574,
+        "recall": 0.806,
+        "f1": 0.671,
+        "false_alarm_rate": 0.346,
+        "accuracy": 0.71
+      },
+      "at_best_f1": {
+        "threshold": 0.4721,
+        "tp": 103,
+        "fp": 60,
+        "fn": 31,
+        "tn": 171,
+        "precision": 0.632,
+        "recall": 0.769,
+        "f1": 0.694,
+        "false_alarm_rate": 0.26,
+        "accuracy": 0.751
+      }
+    },
+    "skeleton_network_only": {
+      "roc_auc": 0.792,
+      "at_target_recall": {
+        "threshold": 0.3372,
+        "tp": 108,
+        "fp": 110,
+        "fn": 26,
+        "tn": 121,
+        "precision": 0.495,
+        "recall": 0.806,
+        "f1": 0.614,
+        "false_alarm_rate": 0.476,
+        "accuracy": 0.627
+      },
+      "at_best_f1": {
+        "threshold": 0.2471,
+        "tp": 128,
+        "fp": 131,
+        "fn": 6,
+        "tn": 100,
+        "precision": 0.494,
+        "recall": 0.955,
+        "f1": 0.651,
+        "false_alarm_rate": 0.567,
+        "accuracy": 0.625
+      }
+    },
+    "movement_features_only": {
+      "roc_auc": 0.815,
+      "at_target_recall": {
+        "threshold": 0.3193,
+        "tp": 108,
+        "fp": 74,
+        "fn": 26,
+        "tn": 157,
+        "precision": 0.593,
+        "recall": 0.806,
+        "f1": 0.684,
+        "false_alarm_rate": 0.32,
+        "accuracy": 0.726
+      },
+      "at_best_f1": {
+        "threshold": 0.1445,
+        "tp": 122,
+        "fp": 85,
+        "fn": 12,
+        "tn": 146,
+        "precision": 0.589,
+        "recall": 0.91,
+        "f1": 0.716,
+        "false_alarm_rate": 0.368,
+        "accuracy": 0.734
+      }
+    }
+  }
+}

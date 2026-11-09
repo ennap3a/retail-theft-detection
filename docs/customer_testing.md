@@ -23,25 +23,25 @@ Put acted or real shoplifting/suspicious concealment videos in `shoplifting`.
 1. Run the app:
 
 ```bash
-python run_local_app.py
+streamlit run streamlit_app.py
 ```
 
 2. Open:
 
 ```text
-http://127.0.0.1:7860
+http://localhost:8501
 ```
 
 3. Upload one video. Do not tell the app whether it is normal or shoplifting.
 
 4. Draw zones:
 
-- Product zone: shelves/tables/racks where items are taken.
-- Customer zone: browsing/standing area.
+- Product zone: shelves/tables/racks where items are taken (required).
+- Checkout and exit zones: optional; they only raise the alert priority.
 
 5. Save setup.
 
-6. Open project summary and click **Run detector**.
+6. Click **Run analysis**.
 
 7. Open results.
 

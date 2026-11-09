@@ -24,23 +24,24 @@ def test_finish_zone_reuses_freed_number() -> None:
     assert sorted(z["id"] for z in zones) == ["product_zone_1", "product_zone_2"]
 
 
-def test_new_customer_zone_replaces_old_one() -> None:
-    zones = finish_zone([], TRIANGLE, "customer")
-    zones = finish_zone(zones, BOX, "customer")
-    customers = [z for z in zones if z["type"] == "customer"]
-    assert len(customers) == 1
-    assert customers[0]["points"][0] == {"x": 120, "y": 20}
+def test_checkout_and_exit_zones_are_numbered() -> None:
+    zones = finish_zone([], TRIANGLE, "exit")
+    zones = finish_zone(zones, BOX, "exit")
+    zones = finish_zone(zones, BOX, "checkout")
+    assert [z["id"] for z in zones] == ["exit_zone_1", "exit_zone_2", "checkout_zone_1"]
+    assert [z["label"] for z in zones] == ["Exit", "Exit 2", "Checkout"]
+    assert zones[1]["points"][0] == {"x": 120, "y": 20}
 
 
 def test_finish_zone_needs_three_points() -> None:
     with pytest.raises(ValueError):
         finish_zone([], TRIANGLE[:2], "product")
     with pytest.raises(ValueError):
-        finish_zone([], TRIANGLE, "exit")
+        finish_zone([], TRIANGLE, "customer")
 
 
 def test_zone_document_is_valid_for_detector() -> None:
-    zones = finish_zone(finish_zone([], TRIANGLE, "product"), BOX, "customer")
+    zones = finish_zone(finish_zone([], TRIANGLE, "product"), BOX, "exit")
     doc = zone_document("p1", 320, 240, 1.25, zones)
     assert validate_zone_document(doc) == []
     assert doc["frame"] == {"width": 320, "height": 240, "source": "setup_frame.jpg", "seconds": 1.25}

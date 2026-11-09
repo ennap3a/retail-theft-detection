@@ -13,6 +13,7 @@ dependencies = [
     "opencv-python>=4.9",
     "ultralytics>=8.3",
     "lap>=0.5.12",
+    "scikit-learn==1.9.1",
     "imageio-ffmpeg>=0.5",
     "streamlit>=1.50",
     "streamlit-image-coordinates>=0.4",
@@ -21,9 +22,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
 silentvision = ["tensorflow>=2.15"]
-
-[project.scripts]
-retail-theft-review = "retail_theft_detector.web_app:main"
 
 [tool.setuptools.packages.find]
 include = ["retail_theft_detector*"]

@@ -17,7 +17,9 @@ def zone_doc(*zones: dict) -> dict:
 
 
 PRODUCT = {"id": "shelf-1", "type": "product", "points": square(10, 10, 100)}
-CUSTOMER = {"id": "aisle", "type": "customer", "points": square(200, 100, 200)}
+CHECKOUT = {"id": "till", "type": "checkout", "points": square(200, 100, 200)}
+EXIT = {"id": "door", "type": "exit", "points": square(450, 300, 100)}
+LEGACY_CUSTOMER = {"id": "aisle", "type": "customer", "points": square(200, 100, 200)}
 
 
 def test_polygon_area() -> None:
@@ -25,22 +27,31 @@ def test_polygon_area() -> None:
     assert polygon_area(square(0, 0, 10)[:2]) == 0
 
 
-def test_valid_zone_document() -> None:
-    doc = zone_doc(PRODUCT, CUSTOMER)
+def test_product_zone_alone_is_enough() -> None:
+    doc = zone_doc(PRODUCT)
     assert validate_zone_document(doc) == []
-    assert zone_counts(doc) == {"product": 1, "customer": 1}
+    assert zone_counts(doc) == {"product": 1, "checkout": 0, "exit": 0}
+
+
+def test_optional_checkout_and_exit_zones() -> None:
+    doc = zone_doc(PRODUCT, CHECKOUT, EXIT, {**EXIT, "id": "door-2"})
+    assert validate_zone_document(doc) == []
+    assert zone_counts(doc) == {"product": 1, "checkout": 1, "exit": 2}
+
+
+def test_zone_files_from_older_versions_still_load() -> None:
+    assert validate_zone_document(zone_doc(PRODUCT, LEGACY_CUSTOMER)) == []
 
 
 @pytest.mark.parametrize(
     ("zones", "message"),
     [
-        ([PRODUCT], "exactly one customer zone"),
-        ([CUSTOMER], "at least one product zone"),
-        ([PRODUCT, CUSTOMER, {**CUSTOMER, "id": "aisle-2"}], "exactly one customer zone"),
-        ([PRODUCT, {**PRODUCT}, CUSTOMER], "duplicate id"),
-        ([PRODUCT, {**CUSTOMER, "points": square(600, 10, 100)}], "outside the frame"),
-        ([PRODUCT, {**CUSTOMER, "points": square(10, 10, 2)}], "too small"),
-        ([PRODUCT, {**CUSTOMER, "type": "exit"}], "type must be product or customer"),
+        ([], "at least one product zone"),
+        ([CHECKOUT, EXIT], "at least one product zone"),
+        ([PRODUCT, {**PRODUCT}], "duplicate id"),
+        ([PRODUCT, {**CHECKOUT, "points": square(600, 10, 100)}], "outside the frame"),
+        ([PRODUCT, {**EXIT, "points": square(10, 10, 2)}], "too small"),
+        ([PRODUCT, {**EXIT, "type": "parking"}], "type must be one of"),
     ],
 )
 def test_invalid_zone_documents(zones: list[dict], message: str) -> None:
@@ -49,7 +60,7 @@ def test_invalid_zone_documents(zones: list[dict], message: str) -> None:
 
 
 def test_missing_frame_size() -> None:
-    assert "Missing frame width/height." in validate_zone_document({"zones": [PRODUCT, CUSTOMER]})
+    assert "Missing frame width/height." in validate_zone_document({"zones": [PRODUCT]})
 
 
 @pytest.mark.parametrize(

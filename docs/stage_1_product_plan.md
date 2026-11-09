@@ -13,13 +13,13 @@ The first version runs locally and uses only Python standard-library web serving
 1. Customer uploads one video.
 2. The system extracts a setup frame.
 3. Customer can choose a better setup-frame timestamp.
-4. Customer draws product zones and one customer zone.
+4. Customer draws product zones, plus optional checkout and exit zones.
 5. The detector uses that setup.
 6. Results become a review dashboard, not an accusation.
 
 ## Zone Guidance
 
-Product zones should be tight around shelves, racks, counters, tables, or other item display areas. Customer zones should cover the browsing area where product interaction is normal, but should not include exits, unrelated walkways, cashier zones, or back rooms.
+Product zones should be tight around shelves, racks, counters, tables, or other item display areas. Everything outside the product zones is treated as shop floor. Checkout zones should cover tills or self-checkouts and exit zones the doors (or frame edge) people leave through; both are optional and only change alert priority.
 
 ## Accuracy Plan
 
